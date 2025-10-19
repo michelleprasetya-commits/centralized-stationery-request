@@ -1,148 +1,72 @@
-# app.py
 import streamlit as st
 import pandas as pd
-import sqlite3
-from datetime import datetime
-import matplotlib.pyplot as plt
-from io import BytesIO
 
-# --- SETUP DATABASE ---
-conn = sqlite3.connect("stationery.db")
-c = conn.cursor()
+st.set_page_config(page_title="Centralized Stationery Request System", layout="wide")
 
-c.execute("""
-CREATE TABLE IF NOT EXISTS requests (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    nama TEXT,
-    departemen TEXT,
-    item TEXT,
-    jumlah INTEGER,
-    tanggal TEXT,
-    keterangan TEXT
-)
-""")
-conn.commit()
-
-c.execute("""
-CREATE TABLE IF NOT EXISTS usage (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    nama TEXT,
-    departemen TEXT,
-    item TEXT,
-    jumlah INTEGER,
-    tanggal TEXT,
-    keterangan TEXT
-)
-""")
-conn.commit()
-
-# --- LOAD ITEM MASTER ---
+# --- Load item master ---
 @st.cache_data
-def load_items():
-    df = pd.read_csv("items_master.csv")
-    df["item_display"] = df["part_number"] + " - " + df["item_name"]
+def load_master():
+    df = pd.read_csv("BPA_Ekstraksi_Part_Number_FINAL.csv")
+    df.columns = df.columns.str.strip()  # bersihkan spasi header
     return df
 
-items = load_items()
+master = load_master()
 
-# --- FUNGSI TAMBAH DATA ---
-def add_request(nama, departemen, item, jumlah, keterangan):
-    tanggal = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    c.execute("INSERT INTO requests (nama, departemen, item, jumlah, tanggal, keterangan) VALUES (?,?,?,?,?,?)",
-              (nama, departemen, item, jumlah, tanggal, keterangan))
-    conn.commit()
+st.title("📦 Centralized Stationery Request System")
+st.write("Silakan isi form berikut untuk pengajuan kebutuhan stationery.")
 
-def add_usage(nama, departemen, item, jumlah, keterangan):
-    tanggal = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    c.execute("INSERT INTO usage (nama, departemen, item, jumlah, tanggal, keterangan) VALUES (?,?,?,?,?,?)",
-              (nama, departemen, item, jumlah, tanggal, keterangan))
-    conn.commit()
+# --- Form Input ---
+with st.form("request_form"):
+    col1, col2 = st.columns(2)
 
-# --- PAGE CONFIG ---
-st.set_page_config(page_title="Stationery Request System", layout="wide")
-st.title("📦 Centralized Stationery Request & Usage System")
+    with col1:
+        dept = st.selectbox("Departemen", ["QA", "Production", "HRGA", "Finance", "PPIC", "R&D", "Engineering", "Warehouse"])
+        requester = st.text_input("Nama PIC")
 
-menu = st.sidebar.radio("Pilih Menu:", ["📝 Form Permintaan", "🧰 Form Pemakaian", "📊 Dashboard", "🧾 Data Rekap"])
+    with col2:
+        date_req = st.date_input("Tanggal Permintaan")
+        remarks = st.text_area("Keterangan Tambahan (opsional)")
 
-# ---------------- FORM PERMINTAAN ----------------
-if menu == "📝 Form Permintaan":
-    st.subheader("📝 Form Permintaan Barang Stationery")
-    with st.form("form_request"):
-        nama = st.text_input("Nama Pemohon")
-        departemen = st.selectbox("Departemen", ["HRGA", "Production", "QC", "QA", "Engineering", "Finance", "Warehouse", "PPIC"])
-        item_pilih = st.selectbox("Pilih Barang", items["item_display"])
-        jumlah = st.number_input("Jumlah Diminta", min_value=1, step=1)
-        keterangan = st.text_area("Keterangan Tambahan (opsional)")
-        submit = st.form_submit_button("Kirim Permintaan")
-        if submit:
-            add_request(nama, departemen, item_pilih, jumlah, keterangan)
-            st.success("✅ Permintaan berhasil dikirim!")
+    st.subheader("🛒 Daftar Barang")
+    selected_item = st.selectbox("Cari Nama Barang", master["Description"].sort_values().unique())
 
-# ---------------- FORM PEMAKAIAN ----------------
-elif menu == "🧰 Form Pemakaian":
-    st.subheader("🧰 Form Pemakaian / Pengambilan Barang")
-    with st.form("form_usage"):
-        nama = st.text_input("Nama Pengambil")
-        departemen = st.selectbox("Departemen", ["HRGA", "Production", "QC", "QA", "Engineering", "Finance", "Warehouse", "PPIC"])
-        item_pilih = st.selectbox("Pilih Barang", items["item_display"])
-        jumlah = st.number_input("Jumlah Dipakai", min_value=1, step=1)
-        keterangan = st.text_area("Keterangan (opsional)")
-        submit = st.form_submit_button("Simpan Pemakaian")
-        if submit:
-            add_usage(nama, departemen, item_pilih, jumlah, keterangan)
-            st.success("✅ Data pemakaian berhasil disimpan!")
+    # Ambil detail otomatis
+    item_info = master.loc[master["Description"] == selected_item].iloc[0]
+    uom = item_info.get("UOM", "")
+    price = item_info.get("Unit Price", "")
 
-# ---------------- DASHBOARD ----------------
-elif menu == "📊 Dashboard":
-    st.subheader("📊 Dashboard Pemakaian & Permintaan")
+    qty = st.number_input("Jumlah", min_value=1, step=1)
 
-    df_req = pd.read_sql("SELECT * FROM requests", conn)
-    df_use = pd.read_sql("SELECT * FROM usage", conn)
+    # Tampilkan auto-fill info
+    st.write(f"**Part Number:** {item_info['Part Number']}")
+    st.write(f"**UOM:** {uom}")
+    st.write(f"**Unit Price (IDR):** {price:,}")
 
-    if df_req.empty and df_use.empty:
-        st.info("Belum ada data.")
-    else:
-        col1, col2 = st.columns(2)
+    submit = st.form_submit_button("💾 Simpan Request")
 
-        with col1:
-            st.write("### Total Permintaan per Departemen")
-            if not df_req.empty:
-                chart_req = df_req.groupby("departemen")["jumlah"].sum()
-                st.bar_chart(chart_req)
-            else:
-                st.write("Belum ada data permintaan.")
+if submit:
+    # Simpan ke CSV rekap
+    new_row = {
+        "Tanggal": date_req,
+        "Departemen": dept,
+        "PIC": requester,
+        "Part Number": item_info["Part Number"],
+        "Deskripsi Barang": selected_item,
+        "UOM": uom,
+        "Harga Satuan": price,
+        "Jumlah": qty,
+        "Total Harga": price * qty if isinstance(price, (int, float)) else "",
+        "Keterangan": remarks
+    }
 
-        with col2:
-            st.write("### Total Pemakaian per Departemen")
-            if not df_use.empty:
-                chart_use = df_use.groupby("departemen")["jumlah"].sum()
-                st.bar_chart(chart_use)
-            else:
-                st.write("Belum ada data pemakaian.")
+    try:
+        rekap = pd.read_csv("rekap_request.csv")
+    except FileNotFoundError:
+        rekap = pd.DataFrame(columns=new_row.keys())
 
-        st.markdown("### 🔝 Top 10 Barang Paling Sering Diminta")
-        if not df_req.empty:
-            top_items = df_req.groupby("item")["jumlah"].sum().sort_values(ascending=False).head(10)
-            st.dataframe(top_items)
+    rekap = pd.concat([rekap, pd.DataFrame([new_row])], ignore_index=True)
+    rekap.to_csv("rekap_request.csv", index=False)
 
-# ---------------- REKAP DATA ----------------
-elif menu == "🧾 Data Rekap":
-    st.subheader("🧾 Data Permintaan & Pemakaian Lengkap")
-    df_req = pd.read_sql("SELECT * FROM requests", conn)
-    df_use = pd.read_sql("SELECT * FROM usage", conn)
+    st.success("✅ Data berhasil disimpan ke rekap_request.csv")
 
-    tab1, tab2 = st.tabs(["📋 Permintaan", "🧰 Pemakaian"])
-    with tab1:
-        st.dataframe(df_req)
-    with tab2:
-        st.dataframe(df_use)
-
-    # tombol download
-    if st.button("⬇️ Download Rekap Excel"):
-        with BytesIO() as buffer:
-            with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-                df_req.to_excel(writer, sheet_name="Requests", index=False)
-                df_use.to_excel(writer, sheet_name="Usage", index=False)
-            st.download_button("Download File Excel", buffer.getvalue(), file_name="rekap_stationery.xlsx")
-
-conn.close()
+    st.dataframe(rekap.tail(10), use_container_width=True)
